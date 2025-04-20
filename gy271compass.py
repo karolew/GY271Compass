@@ -1,4 +1,4 @@
-from machine import I2C, Pin
+from machine import I2C
 import time
 import math
 
@@ -61,7 +61,7 @@ class QMC5883L:
         self.i2c.writeto_mem(self.address, self.REG_SET_RESET, bytes([0b00000001]))
         time.sleep(0.1)
 
-    def read_raw_data(self):
+    def read_raw_data(self) -> tuple:
         # Read 6 bytes of data from register(0x00)
         data = self.i2c.readfrom_mem(self.address, self.REG_XOUT_LSB, 6)
 
@@ -85,7 +85,7 @@ class QMC5883L:
 
         return x, y, z
 
-    def get_heading(self):
+    def get_heading(self) -> float:
         x, y, z = self.read_raw_data()
 
         # Calculate heading in degrees
@@ -105,51 +105,6 @@ class QMC5883L:
         return heading_degrees
 
     @staticmethod
-    def get_direction(angle_degrees):
+    def get_direction(angle_degrees) -> str:
         directions = ["N", "NE", "E", "SE", "S", "SW", "W", "NW", "N"]
         return directions[round(angle_degrees / 45) % 8]
-
-
-# Initialize I2C on ESP32 with specified pins
-i2c = I2C(0, scl=Pin(22), sda=Pin(21), freq=100000)
-
-
-def scan_i2c():
-    print("Scanning I2C bus...")
-    devices = i2c.scan()
-
-    if len(devices) == 0:
-        print("No I2C devices found!")
-    else:
-        print("I2C devices found:", len(devices))
-        for device in devices:
-            print("Device address: 0x{:02X}".format(device))
-
-
-# Main program
-try:
-    # Scan for I2C devices
-    scan_i2c()
-
-    # Initialize compass
-    compass = QMC5883L(i2c,
-                       corrections={"x_offset": -930, "x_scale": 0.9, "y_offset": -1894, "y_scale": 1.13})
-
-    print("QMC5883L (GY-271) compass initialized")
-    print("Reading compass data...")
-
-    while True:
-        try:
-            heading = compass.get_heading()
-            (x, y, z) = compass.read_raw_data()
-
-            print(f"Heading: {heading:.2f}° ({compass.get_direction(heading)}) X: {x}, Y: {y}, Z: {z}")
-
-            time.sleep(0.25)
-
-        except Exception as e:
-            print("Error reading compass:", e)
-            time.sleep(1)
-
-except Exception as e:
-    print("Error initializing compass:", e)
