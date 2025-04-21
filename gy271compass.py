@@ -13,7 +13,7 @@ class QMC5883L:
     REG_ZOUT_LSB = 0x04     # ZOUT[7:0]
     REG_ZOUT_MSB = 0x05     # ZOUT[15:8]
     REG_STATUS = 0x06       # bit 0 is DRDY: “0”: no new data, “1”: new data is ready
-                            # bit 1 is OVL: “0”: normal, “1”: data overflow x,y or z not in range -32768 to 32767
+                            # bit 1 is OVL: “0”: normal, “1”: data overflow x, y or z not in range -32768 to 32767
     REG_TOUT_LSB = 0x07
     REG_TOUT_MSB = 0x08
     REG_CONTROL1 = 0x09
@@ -53,8 +53,8 @@ class QMC5883L:
         self.i2c.writeto_mem(self.address, self.REG_CONTROL2, bytes([0b10000000]))
         time.sleep(0.1)
 
-        # Set to continuous measurement mode, 2G range, 10Hz output rate, over sampling ratio 512.
-        self.i2c.writeto_mem(self.address, self.REG_CONTROL1, bytes([0b00010001]))
+        # Set to continuous measurement mode, 2G range, 50Hz output rate, over sampling ratio 512.
+        self.i2c.writeto_mem(self.address, self.REG_CONTROL1, bytes([0b00010101]))
         time.sleep(0.1)
 
         # Set/Reset period
