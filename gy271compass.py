@@ -1,6 +1,7 @@
-from machine import I2C
-import time
 import math
+import time
+
+from machine import I2C
 
 
 class QMC5883L:
@@ -25,29 +26,28 @@ class QMC5883L:
 
     def __init__(self, i2c: I2C,
                  address: int = None,
-                 corrections: dict = None,
-                 magnetic_declination_angle_rad: float = 0) -> None:
+                 calibration_offsets: tuple = None,
+                 calibration_transform_matrix: list = None) -> None:
         """
         i2c:
             I2C interface.
         address:
             Address of the compass SoC. default 0x0D.
-        corrections:
-            dictionary with correction data for x and y coordinates. Example:
-            {
-                "x_offset": -930,
-                "x_scale": 0.9,
-                "y_offset": -1894,
-                "y_scale": 1.13
-            }
-        magnetic_declination_angle_rad:
-            Due to declination, add/subtract the offset to get true north.
-            Find declination for your location: http://www.magnetic-declination.com/
+        calibration_offsets: tuple
+            hard iron calibration
+        transform_matrix
+            soft iron calibration
         """
         self.i2c = i2c
         self.address = address if address else 0x0D     # Typical QMC5883L address.
-        self.corrections = corrections
-        self.magnetic_declination_angle_rad = magnetic_declination_angle_rad
+
+        # Calibration parameters - hard iron (offsets)
+        # Example (-2364, -496, 68)
+        self.offset_x, self.offset_y, self.offset_z = calibration_offsets
+
+        # Calibration parameters - soft iron (transformation matrix)
+        # Example [[1.118951, 0.0, 0.0], [0.0, 1.07733, 0.0], [0.0, 0.0, 0.8488354]])
+        self.transform_matrix = calibration_transform_matrix
 
         # Soft reset
         self.i2c.writeto_mem(self.address, self.REG_CONTROL2, bytes([0b10000000]))
@@ -63,46 +63,73 @@ class QMC5883L:
 
     def read_raw_data(self) -> tuple:
         # Read 6 bytes of data from register(0x00)
-        data = self.i2c.readfrom_mem(self.address, self.REG_XOUT_LSB, 6)
+        try:
+            data = self.i2c.readfrom_mem(self.address, self.REG_XOUT_LSB, 6)
+            # Convert the data to signed 16-bit values
+            x = data[0] | (data[1] << 8)
+            if x > self._16_bit_value_half:
+                x -= self._16_bit_value_max
 
-        # Convert the data to signed 16-bit values
-        x = data[0] | (data[1] << 8)
-        if x > self._16_bit_value_half:
-            x -= self._16_bit_value_max
+            y = data[2] | (data[3] << 8)
+            if y > self._16_bit_value_half:
+                y -= self._16_bit_value_max
 
-        y = data[2] | (data[3] << 8)
-        if y > self._16_bit_value_half:
-            y -= self._16_bit_value_max
+            z = data[4] | (data[5] << 8)
+            if z > self._16_bit_value_half:
+                z -= self._16_bit_value_max
 
-        z = data[4] | (data[5] << 8)
-        if z > self._16_bit_value_half:
-            z -= self._16_bit_value_max
+            return x, y, z
+        except Exception as e:
+            print(f"Error reading compass data: {e}")
+            return None, None, None
 
-        if self.corrections:
-            calibrated_x = (x - self.corrections["x_offset"]) * self.corrections["x_scale"]
-            calibrated_y = (y - self.corrections["y_offset"]) * self.corrections["y_scale"]
-            return calibrated_x, calibrated_y, z
-
-        return x, y, z
-
-    def get_heading(self) -> float:
+    def read_calibrated_data(self) -> tuple:
+        """Read and apply calibration to data."""
+        # Get raw data
         x, y, z = self.read_raw_data()
 
-        # Calculate heading in degrees
-        heading = math.atan2(y, x) + self.magnetic_declination_angle_rad
+        if x and y and z:
+            # Apply hard iron correction (offset)
+            x_offset = x - self.offset_x
+            y_offset = y - self.offset_y
+            z_offset = z - self.offset_z
 
-        # Correct for when signs are reversed.
-        if heading < 0:
-            heading += 2 * math.pi
+            # Apply soft iron correction (transformation matrix)
+            x_cal = (self.transform_matrix[0][0] * x_offset +
+                     self.transform_matrix[0][1] * y_offset +
+                     self.transform_matrix[0][2] * z_offset)
 
-        # Check for wrap due to addition of declination.
-        if heading > 2 * math.pi:
-            heading -= 2 * math.pi
+            y_cal = (self.transform_matrix[1][0] * x_offset +
+                     self.transform_matrix[1][1] * y_offset +
+                     self.transform_matrix[1][2] * z_offset)
 
-        # Convert radians to degrees.
-        heading_degrees = heading * 180 / math.pi
+            z_cal = (self.transform_matrix[2][0] * x_offset +
+                     self.transform_matrix[2][1] * y_offset +
+                     self.transform_matrix[2][2] * z_offset)
 
-        return heading_degrees
+            return x_cal, y_cal, z_cal
+        return None, None, None
+
+    def get_heading(self) -> float | None:
+        x, y, z = self.read_calibrated_data()
+
+        if x and y:
+            # Calculate heading in degrees
+            heading = math.atan2(y, x)
+
+            # Correct for when signs are reversed.
+            if heading < 0:
+                heading += 2 * math.pi
+
+            # Check for wrap due to addition of declination.
+            if heading > 2 * math.pi:
+                heading -= 2 * math.pi
+
+            # Convert radians to degrees.
+            heading_degrees = heading * 180 / math.pi
+
+            return heading_degrees
+        return None
 
     @staticmethod
     def get_direction(angle_degrees) -> str:
